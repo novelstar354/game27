@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>東方風神録風・一面再現（Lunatic対応）</title>
+<style>
+html,body{margin:0;height:100%;background:#020617;color:#e5ecff;font-family:system-ui}
+.wrap{display:grid;place-items:center;height:100%}
+canvas{background:linear-gradient(#020617,#0b1220);border-radius:14px;touch-action:none}
+.hud{display:flex;gap:10px;margin-top:6px;font-size:12px;flex-wrap:wrap}
+button,select{background:#1e293b;color:#fff;border:0;border-radius:8px;padding:6px 10px}
+.overlay{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none}
+</style>
+</head>
+<body>
+<div class="wrap"><div style="position:relative">
+<canvas id="game"></canvas>
+
+<div class="overlay" id="pauseLayer" style="display:none">
+<div style="background:rgba(2,6,23,.85);padding:20px;border-radius:14px">
+<h2>PAUSE</h2>
+</div>
+</div>
+
+<div class="hud">
+<div>Score:<span id="score">0</span></div>
+<div>Hi:<span id="hiscore">0</span></div>
+<div>Life:<span id="life">3</span></div>
+<div>Bomb:<span id="bomb">2</span></div>
+<select id="difficulty">
+<option value="easy">Easy</option>
+<option value="normal" selected>Normal</option>
+<option value="hard">Hard</option>
+<option value="lunatic">Lunatic</option>
+</select>
+<button id="btnPause">Pause</button>
+<button id="btnAuto">Auto:ON</button>
+<button onclick="resetGame()">Restart</button>
+</div>
+</div></div>
+
+<script>
+const cvs=document.getElementById('game'),ctx=cvs.getContext('2d');
+const ui={
+score:scoreEl=document.getElementById('score'),
+hiscore:document.getElementById('hiscore'),
+life:document.getElementById('life'),
+bomb:document.getElementById('bomb')
+};
+
+function resize(){
+const r=9/16;
+let w=innerWidth,h=innerHeight;
+if(w/h>r)w=h*r;else h=w/r;
+cvs.width=w|0;cvs.height=h|0;
+}
+addEventListener('resize',resize);resize();
+const W=()=>cvs.width,H=()=>cvs.height;
+
+let score=0,life=3,bomb=2,tick=0,paused=false,autoFire=true;
+let hiscore=+localStorage.getItem('hiscore_fuu')||0;
+ui.hiscore.textContent=hiscore;
+
+const player={x:0,y:0,r:3,inv:0};
+const shots=[],bullets=[],enemies=[];
+const midboss={x:0,y:120,hp:700,max:700,alive:false};
+const boss={x:0,y:100,hp:1600,max:1600,alive:false};
+
+let difficulty='normal';
+const diffMul={easy:.7,normal:1,hard:1.3,lunatic:1.8};
+document.getElementById('difficulty').onchange=e=>difficulty=e.target.value;
+
+const keys={};
+addEventListener('keydown',e=>keys[e.key]=true);
+addEventListener('keyup',e=>keys[e.key]=false);
+
+let bombCD=0;
+
+function shoot(){shots.push({x:player.x,y:player.y,vy:-7});}
+function bombUse(){
+if(bomb<=0||bombCD>0)return;
+bomb--;bombCD=60;bullets.length=0;
+}
+
+function waveLine(){
+for(let i=0;i<6;i++)
+enemies.push({x:40+i*60,y:-20,vy:1.6*diffMul[difficulty],hp:20});
+}
+
+function midBossFire(){
+for(let i=0;i<(difficulty==='lunatic'?32:16);i++){
+const a=i*Math.PI*2/32+tick*.1;
+bullets.push({x:midboss.x,y:midboss.y,
+vx:Math.cos(a)*2,vy:Math.sin(a)*2,r:3});
+}
+}
+
+function bossFire(){
+for(let i=0;i<(difficulty==='lunatic'?48:28);i++){
+const a=i*Math.PI*2/48+tick*.05;
+bullets.push({x:boss.x,y:boss.y,
+vx:Math.cos(a)*2.4,vy:Math.sin(a)*2.4,r:3});
+}
+}
+
+function hit(a,b,ra,rb){
+return Math.hypot(a.x-b.x,a.y-b.y)<ra+rb;
+}
+
+function update(){
+if(paused)return;
+tick++;
+if(!player.x){player.x=W()/2;player.y=H()-80;midboss.x=boss.x=W()/2;}
+
+const spd=3*(keys.Shift?.5:1);
+if(keys.ArrowLeft)player.x-=spd;
+if(keys.ArrowRight)player.x+=spd;
+if(keys.ArrowUp)player.y-=spd;
+if(keys.ArrowDown)player.y+=spd;
+
+if((autoFire||keys.z)&&tick%6===0)shoot();
+if(keys.x)bombUse();
+if(bombCD>0)bombCD--;
+
+if(tick===40)waveLine();
+if(tick===300){midboss.alive=true;}
+if(midboss.alive&&tick%40===0)midBossFire();
+if(midboss.alive&&midboss.hp<=0){midboss.alive=false;boss.alive=true;bullets.length=0;}
+if(boss.alive&&tick%35===0)bossFire();
+
+shots.forEach(s=>s.y+=s.vy);
+bullets.forEach(b=>{b.x+=b.vx;b.y+=b.vy;});
+enemies.forEach(e=>e.y+=e.vy);
+
+// 衝突
+shots.forEach(s=>{
+enemies.forEach(e=>{if(hit(s,e,2,9)){e.hp-=10;s.y=-999;score+=100;}});
+if(midboss.alive&&hit(s,midboss,2,28)){midboss.hp-=10;s.y=-999;score+=50;}
+if(boss.alive&&hit(s,boss,2,36)){boss.hp-=10;s.y=-999;score+=80;}
+});
+
+bullets.forEach(b=>{
+if(player.inv<=0&&hit(player,b,6,b.r)){life--;player.inv=120;}
+});
+
+if(player.inv>0)player.inv--;
+
+ui.score.textContent=score;
+ui.life.textContent=life;
+ui.bomb.textContent=bomb;
+
+if(score>hiscore){
+hiscore=score;
+localStorage.setItem('hiscore_fuu',hiscore);
+ui.hiscore.textContent=hiscore;
+}
+}
+
+function draw(){
+ctx.clearRect(0,0,W(),H());
+ctx.fillStyle='#7dd3fc';
+ctx.beginPath();ctx.arc(player.x,player.y,6,0,7);ctx.fill();
+
+ctx.fillStyle='#fde047';
+shots.forEach(s=>ctx.fillRect(s.x-1,s.y-6,2,6));
+
+ctx.fillStyle='#f472b6';
+bullets.forEach(b=>{ctx.beginPath();ctx.arc(b.x,b.y,b.r,0,7);ctx.fill();});
+
+ctx.fillStyle='#34d399';
+enemies.forEach(e=>{ctx.beginPath();ctx.arc(e.x,e.y,9,0,7);ctx.fill();});
+
+if(midboss.alive){ctx.fillStyle='#f59e0b';ctx.beginPath();ctx.arc(midboss.x,midboss.y,28,0,7);ctx.fill();}
+if(boss.alive){ctx.fillStyle='#a855f7';ctx.beginPath();ctx.arc(boss.x,boss.y,36,0,7);ctx.fill();}
+}
+
+function loop(){update();draw();requestAnimationFrame(loop);}
+loop();
+
+function resetGame(){
+score=0;life=3;bomb=2;tick=0;
+shots.length=bullets.length=enemies.length=0;
+midboss.alive=boss.alive=false;
+}
+</script>
+</body>
+</html>
