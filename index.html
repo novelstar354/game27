@@ -2,187 +2,275 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
+<title>東方風 弾幕STG Lunatic Chaos - Full</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>東方風神録風・一面再現（Lunatic対応）</title>
 <style>
 html,body{margin:0;height:100%;background:#020617;color:#e5ecff;font-family:system-ui}
 .wrap{display:grid;place-items:center;height:100%}
-canvas{background:linear-gradient(#020617,#0b1220);border-radius:14px;touch-action:none}
-.hud{display:flex;gap:10px;margin-top:6px;font-size:12px;flex-wrap:wrap}
-button,select{background:#1e293b;color:#fff;border:0;border-radius:8px;padding:6px 10px}
-.overlay{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none}
+canvas{background:#070b1f;border-radius:12px}
+.ui{font-size:12px;margin-top:6px;opacity:.85}
+.menu{position:absolute;inset:0;display:grid;place-items:center;background:rgba(0,0,0,.7)}
+.menuBox{background:#0b1220;padding:24px 36px;border-radius:16px}
+.menuItem{margin:10px 0;font-size:20px;opacity:.6}
+.menuItem.sel{opacity:1;color:#ff6b6b;transform:scale(1.25)}
 </style>
 </head>
 <body>
-<div class="wrap"><div style="position:relative">
-<canvas id="game"></canvas>
 
-<div class="overlay" id="pauseLayer" style="display:none">
-<div style="background:rgba(2,6,23,.85);padding:20px;border-radius:14px">
-<h2>PAUSE</h2>
-</div>
+<div class="wrap">
+<canvas id="c" width="360" height="480"></canvas>
+<div class="ui">移動/WASD｜低速Shift｜Z/Space｜X AUTO｜B ボム｜P ポーズ</div>
 </div>
 
-<div class="hud">
-<div>Score:<span id="score">0</span></div>
-<div>Hi:<span id="hiscore">0</span></div>
-<div>Life:<span id="life">3</span></div>
-<div>Bomb:<span id="bomb">2</span></div>
-<select id="difficulty">
-<option value="easy">Easy</option>
-<option value="normal" selected>Normal</option>
-<option value="hard">Hard</option>
-<option value="lunatic">Lunatic</option>
-</select>
-<button id="btnPause">Pause</button>
-<button id="btnAuto">Auto:ON</button>
-<button onclick="resetGame()">Restart</button>
+<div class="menu" id="menu">
+<div class="menuBox">
+<div class="menuItem">Easy</div>
+<div class="menuItem">Normal</div>
+<div class="menuItem">Hard</div>
+<div class="menuItem">Lunatic</div>
+<div style="opacity:.6;font-size:12px;margin-top:14px">↑↓ 選択 / Enter 決定</div>
 </div>
-</div></div>
+</div>
 
 <script>
-const cvs=document.getElementById('game'),ctx=cvs.getContext('2d');
-const ui={
-score:scoreEl=document.getElementById('score'),
-hiscore:document.getElementById('hiscore'),
-life:document.getElementById('life'),
-bomb:document.getElementById('bomb')
+const c=document.getElementById("c"),ctx=c.getContext("2d");
+const W=c.width,H=c.height;
+const keys={};
+addEventListener("keydown",e=>keys[e.key]=true);
+addEventListener("keyup",e=>keys[e.key]=false);
+
+const hit=(ax,ay,bx,by,r)=>{
+ let dx=ax-bx,dy=ay-by;
+ return dx*dx+dy*dy<r*r;
 };
 
-function resize(){
-const r=9/16;
-let w=innerWidth,h=innerHeight;
-if(w/h>r)w=h*r;else h=w/r;
-cvs.width=w|0;cvs.height=h|0;
+const DIFF={
+ easy:{b:1,hp:1200},
+ normal:{b:1.4,hp:2000},
+ hard:{b:1.8,hp:2800},
+ lunatic:{b:2.6,hp:4200}
+};
+
+let mode=null,frame=0,paused=false;
+let bullets=[],shots=[],enemies=[];
+let boss=null;
+let life=3,bomb=3,inv=0;
+let autoFire=true,score=0,hiScore=0,phase="mob";
+
+const player={x:W/2,y:H-60,r:3,s:3.2,slow:1.4};
+
+const ENEMY_TYPES=[
+ {hp:6,speed:1.4,fire(e){
+  let a=Math.atan2(player.y-e.y,player.x-e.x);
+  bullets.push({x:e.x,y:e.y,vx:Math.cos(a)*2,vy:Math.sin(a)*2,r:4});
+ }},
+ {hp:8,speed:1,fire(e){
+  for(let i=0;i<6;i++){
+   let a=i/6*Math.PI*2;
+   bullets.push({x:e.x,y:e.y,vx:Math.cos(a)*1.6,vy:Math.sin(a)*1.6,r:3});
+  }
+ }},
+ {hp:4,speed:2.8,fire(e){}}
+];
+
+const menu=document.getElementById("menu");
+const items=[...document.querySelectorAll(".menuItem")];
+let sel=0;
+items.forEach((m,i)=>m.onclick=()=>{sel=i;start();});
+const updateMenu=()=>items.forEach((m,i)=>m.classList.toggle("sel",i===sel));
+updateMenu();
+
+function start(){
+ mode=items[sel].textContent.toLowerCase();
+ menu.style.display="none";
+ frame=0;paused=false;
+ bullets=[];shots=[];enemies=[];
+ life=3;bomb=3;inv=0;
+ score=0;phase="mob";
+ hiScore=+localStorage.getItem("hi_"+mode)||0;
+ boss=null;
 }
-addEventListener('resize',resize);resize();
-const W=()=>cvs.width,H=()=>cvs.height;
 
-let score=0,life=3,bomb=2,tick=0,paused=false,autoFire=true;
-let hiscore=+localStorage.getItem('hiscore_fuu')||0;
-ui.hiscore.textContent=hiscore;
+function shoot(){
+ if(frame%5!==0)return;
+ let y=player.y-8,x=player.x;
+ if(keys.Shift){
+  [-6,-2,2,6].forEach(dx=>{
+   shots.push({x:x+dx,y,vx:0,vy:-6});
+  });
+ }else{
+  shots.push({x:x-8,y,vx:-0.6,vy:-6});
+  shots.push({x:x-3,y,vx:-0.2,vy:-6});
+  shots.push({x:x+3,y,vx:0.2,vy:-6});
+  shots.push({x:x+8,y,vx:0.6,vy:-6});
+ }
+}
 
-const player={x:0,y:0,r:3,inv:0};
-const shots=[],bullets=[],enemies=[];
-const midboss={x:0,y:120,hp:700,max:700,alive:false};
-const boss={x:0,y:100,hp:1600,max:1600,alive:false};
-
-let difficulty='normal';
-const diffMul={easy:.7,normal:1,hard:1.3,lunatic:1.8};
-document.getElementById('difficulty').onchange=e=>difficulty=e.target.value;
-
-const keys={};
-addEventListener('keydown',e=>keys[e.key]=true);
-addEventListener('keyup',e=>keys[e.key]=false);
-
-let bombCD=0;
-
-function shoot(){shots.push({x:player.x,y:player.y,vy:-7});}
 function bombUse(){
-if(bomb<=0||bombCD>0)return;
-bomb--;bombCD=60;bullets.length=0;
+ if(bomb<=0)return;
+ bomb--;
+ bullets=[];
+ inv=180;
 }
 
-function waveLine(){
-for(let i=0;i<6;i++)
-enemies.push({x:40+i*60,y:-20,vy:1.6*diffMul[difficulty],hp:20});
-}
-
-function midBossFire(){
-for(let i=0;i<(difficulty==='lunatic'?32:16);i++){
-const a=i*Math.PI*2/32+tick*.1;
-bullets.push({x:midboss.x,y:midboss.y,
-vx:Math.cos(a)*2,vy:Math.sin(a)*2,r:3});
-}
-}
-
-function bossFire(){
-for(let i=0;i<(difficulty==='lunatic'?48:28);i++){
-const a=i*Math.PI*2/48+tick*.05;
-bullets.push({x:boss.x,y:boss.y,
-vx:Math.cos(a)*2.4,vy:Math.sin(a)*2.4,r:3});
-}
-}
-
-function hit(a,b,ra,rb){
-return Math.hypot(a.x-b.x,a.y-b.y)<ra+rb;
+function spawnEnemy(){
+ let t=ENEMY_TYPES[Math.random()*3|0];
+ enemies.push({
+  x:Math.random()*(W-40)+20,
+  y:-20,vx:(Math.random()<0.5?-1:1)*0.6,
+  hp:t.hp,speed:t.speed,fire:t.fire,t:0
+ });
 }
 
 function update(){
-if(paused)return;
-tick++;
-if(!player.x){player.x=W()/2;player.y=H()-80;midboss.x=boss.x=W()/2;}
+ if(!mode){
+  if(keys.ArrowUp){sel=(sel+3)%4;keys.ArrowUp=false;updateMenu();}
+  if(keys.ArrowDown){sel=(sel+1)%4;keys.ArrowDown=false;updateMenu();}
+  if(keys.Enter){start();keys.Enter=false;}
+  return;
+ }
 
-const spd=3*(keys.Shift?.5:1);
-if(keys.ArrowLeft)player.x-=spd;
-if(keys.ArrowRight)player.x+=spd;
-if(keys.ArrowUp)player.y-=spd;
-if(keys.ArrowDown)player.y+=spd;
+ if((keys.x||keys.X)&&!keys._x)autoFire=!autoFire;
+ keys._x=keys.x||keys.X;
+ if((keys.p||keys.P)&&!keys._p)paused=!paused;
+ keys._p=keys.p||keys.P;
+ if(paused)return;
 
-if((autoFire||keys.z)&&tick%6===0)shoot();
-if(keys.x)bombUse();
-if(bombCD>0)bombCD--;
+ frame++;score++;if(inv>0)inv--;
 
-if(tick===40)waveLine();
-if(tick===300){midboss.alive=true;}
-if(midboss.alive&&tick%40===0)midBossFire();
-if(midboss.alive&&midboss.hp<=0){midboss.alive=false;boss.alive=true;bullets.length=0;}
-if(boss.alive&&tick%35===0)bossFire();
+ let sp=keys.Shift?player.slow:player.s;
+ if(keys.ArrowLeft||keys.a)player.x-=sp;
+ if(keys.ArrowRight||keys.d)player.x+=sp;
+ if(keys.ArrowUp||keys.w)player.y-=sp;
+ if(keys.ArrowDown||keys.s)player.y+=sp;
+ player.x=Math.max(10,Math.min(W-10,player.x));
+ player.y=Math.max(10,Math.min(H-10,player.y));
 
-shots.forEach(s=>s.y+=s.vy);
-bullets.forEach(b=>{b.x+=b.vx;b.y+=b.vy;});
-enemies.forEach(e=>e.y+=e.vy);
+ if(autoFire||keys.z||keys.Z||keys[" "])shoot();
+ if(keys.b||keys.B){bombUse();keys.b=keys.B=false}
 
-// 衝突
-shots.forEach(s=>{
-enemies.forEach(e=>{if(hit(s,e,2,9)){e.hp-=10;s.y=-999;score+=100;}});
-if(midboss.alive&&hit(s,midboss,2,28)){midboss.hp-=10;s.y=-999;score+=50;}
-if(boss.alive&&hit(s,boss,2,36)){boss.hp-=10;s.y=-999;score+=80;}
-});
+ shots.forEach(s=>{s.x+=s.vx;s.y+=s.vy;});
 
-bullets.forEach(b=>{
-if(player.inv<=0&&hit(player,b,6,b.r)){life--;player.inv=120;}
-});
+ if(phase==="mob"){
+  if(frame%40===0)spawnEnemy();
+  if(frame>900){
+   phase="boss";
+   boss={x:W/2,y:80,hp:DIFF[mode].hp,maxHp:DIFF[mode].hp,phase:0,form:1};
+  }
+ }
 
-if(player.inv>0)player.inv--;
+ enemies.forEach(e=>{
+  e.t++;e.x+=e.vx;e.y+=e.speed;
+  if(e.fire&&e.t%70===0)e.fire(e);
+ });
 
-ui.score.textContent=score;
-ui.life.textContent=life;
-ui.bomb.textContent=bomb;
+ shots.forEach(s=>{
+  enemies.forEach(e=>{
+   if(hit(s.x,s.y,e.x,e.y,12)){
+    e.hp--;s.y=-999;
+    if(e.hp<=0){score+=200;e.y=999;}
+   }
+  });
+ });
 
-if(score>hiscore){
-hiscore=score;
-localStorage.setItem('hiscore_fuu',hiscore);
-ui.hiscore.textContent=hiscore;
+ enemies=enemies.filter(e=>e.y<H+40&&e.hp>0);
+
+ if(boss){
+  boss.phase++;
+  boss.x=W/2+Math.sin(frame*0.01)*80;
+
+  if(mode==="lunatic"){
+   if(boss.hp<boss.maxHp*0.66)boss.form=2;
+   if(boss.hp<boss.maxHp*0.33)boss.form=3;
+   if(boss.hp<boss.maxHp*0.15)boss.form=4;
+  }
+
+  if(frame%((boss.form>=3)?18:30)===0){
+   let n=boss.form>=3?32:24;
+   let sp=boss.form>=3?3:2.2;
+   for(let i=0;i<n;i++){
+    let a=i/n*Math.PI*2+boss.phase*0.05;
+    bullets.push({x:boss.x,y:boss.y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,r:4});
+   }
+  }
+
+  if(boss.form===4){
+   if(frame%40===0){
+    let a=Math.atan2(player.y-boss.y,player.x-boss.x);
+    [-0.15,0,0.15].forEach(d=>{
+     bullets.push({x:boss.x,y:boss.y,vx:Math.cos(a+d)*5,vy:Math.sin(a+d)*5,r:6});
+    });
+   }
+   if(frame%6===0){
+    bullets.push({x:Math.random()*W,y:-10,vx:0,vy:4.2,r:3});
+   }
+  }
+ }
+
+ bullets.forEach(b=>{
+  b.x+=b.vx;b.y+=b.vy;
+  if(inv<=0&&hit(b.x,b.y,player.x,player.y,b.r+player.r)){
+   life--;inv=120;bullets=[];
+   if(life<=0)endGame();
+  }
+ });
+
+ bullets=bullets.filter(b=>b.x>-30&&b.x<W+30&&b.y>-30&&b.y<H+30);
+ if(bullets.length>1200)bullets.length=1200;
+ shots=shots.filter(s=>s.y>-20);
+
+ if(boss){
+  shots.forEach(s=>{
+   if(hit(s.x,s.y,boss.x,boss.y,18)){
+    boss.hp--;score+=10;s.y=-999;
+    if(boss.hp<=0){score+=5000;endGame();}
+   }
+  });
+ }
 }
+
+function endGame(){
+ if(score>hiScore){
+  hiScore=score;
+  localStorage.setItem("hi_"+mode,hiScore);
+ }
+ mode=null;menu.style.display="grid";
 }
 
 function draw(){
-ctx.clearRect(0,0,W(),H());
-ctx.fillStyle='#7dd3fc';
-ctx.beginPath();ctx.arc(player.x,player.y,6,0,7);ctx.fill();
+ ctx.clearRect(0,0,W,H);
+ if(!mode)return;
 
-ctx.fillStyle='#fde047';
-shots.forEach(s=>ctx.fillRect(s.x-1,s.y-6,2,6));
-
-ctx.fillStyle='#f472b6';
-bullets.forEach(b=>{ctx.beginPath();ctx.arc(b.x,b.y,b.r,0,7);ctx.fill();});
-
-ctx.fillStyle='#34d399';
-enemies.forEach(e=>{ctx.beginPath();ctx.arc(e.x,e.y,9,0,7);ctx.fill();});
-
-if(midboss.alive){ctx.fillStyle='#f59e0b';ctx.beginPath();ctx.arc(midboss.x,midboss.y,28,0,7);ctx.fill();}
-if(boss.alive){ctx.fillStyle='#a855f7';ctx.beginPath();ctx.arc(boss.x,boss.y,36,0,7);ctx.fill();}
+ shots.forEach(s=>{
+  ctx.fillStyle="#7df9ff";
+  ctx.fillRect(s.x-2,s.y-8,4,8);
+ });
+ enemies.forEach(e=>{
+  ctx.fillStyle="#ffaa00";
+  ctx.beginPath();ctx.arc(e.x,e.y,10,0,Math.PI*2);ctx.fill();
+ });
+ bullets.forEach(b=>{
+  ctx.fillStyle="#ff5cff";
+  ctx.beginPath();ctx.arc(b.x,b.y,b.r,0,Math.PI*2);ctx.fill();
+ });
+ if(boss){
+  ctx.fillStyle=
+   boss.form===4?"#ffffff":
+   boss.form===3?"#ff00ff":
+   boss.form===2?"#ff5566":"#ff3355";
+  ctx.beginPath();ctx.arc(boss.x,boss.y,22,0,Math.PI*2);ctx.fill();
+ }
+ if(inv%10<5){
+  ctx.fillStyle="#4cc9ff";
+  ctx.beginPath();ctx.arc(player.x,player.y,6,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle="red";
+  ctx.beginPath();ctx.arc(player.x,player.y,player.r,0,Math.PI*2);ctx.fill();
+ }
+ ctx.fillStyle="#fff";
+ ctx.fillText(`SCORE:${score} HI:${hiScore} LIFE:${life} BOMB:${bomb}`,6,H-10);
 }
 
-function loop(){update();draw();requestAnimationFrame(loop);}
-loop();
-
-function resetGame(){
-score=0;life=3;bomb=2;tick=0;
-shots.length=bullets.length=enemies.length=0;
-midboss.alive=boss.alive=false;
-}
+(function loop(){update();draw();requestAnimationFrame(loop)})();
 </script>
 </body>
 </html>
