@@ -2,25 +2,75 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<title>東方風 弾幕STG Lunatic Chaos - Full</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>東方風 弾幕STG Lunatic Chaos - Mobile & PC</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <style>
-html,body{margin:0;height:100%;background:#020617;color:#e5ecff;font-family:system-ui}
-.wrap{display:grid;place-items:center;height:100%}
-canvas{background:#070b1f;border-radius:12px}
-.ui{font-size:12px;margin-top:6px;opacity:.85}
-.menu{position:absolute;inset:0;display:grid;place-items:center;background:rgba(0,0,0,.7)}
-.menuBox{background:#0b1220;padding:24px 36px;border-radius:16px}
-.menuItem{margin:10px 0;font-size:20px;opacity:.6}
-.menuItem.sel{opacity:1;color:#ff6b6b;transform:scale(1.25)}
+html,body{
+ margin:0;height:100%;
+ background:#020617;color:#e5ecff;
+ font-family:system-ui;
+ overscroll-behavior:none;
+}
+.wrap{
+ display:grid;
+ place-items:center;
+ height:100%;
+}
+canvas{
+ background:#070b1f;
+ border-radius:12px;
+ max-width:100vw;
+ max-height:100vh;
+ touch-action:none;
+}
+.ui{
+ font-size:12px;
+ margin-top:6px;
+ opacity:.85;
+ text-align:center;
+}
+.btn{
+ position:absolute;
+ padding:12px 16px;
+ background:rgba(30,40,80,.7);
+ border-radius:12px;
+ font-size:14px;
+ user-select:none;
+}
+#bombBtn{right:12px;bottom:80px}
+#pauseBtn{right:12px;top:12px}
+
+.menu{
+ position:absolute;inset:0;
+ display:grid;place-items:center;
+ background:rgba(0,0,0,.7)
+}
+.menuBox{
+ background:#0b1220;
+ padding:24px 36px;
+ border-radius:16px
+}
+.menuItem{
+ margin:10px 0;
+ font-size:20px;
+ opacity:.6
+}
+.menuItem.sel{
+ opacity:1;color:#ff6b6b;
+ transform:scale(1.25)
+}
 </style>
 </head>
 <body>
 
 <div class="wrap">
 <canvas id="c" width="360" height="480"></canvas>
-<div class="ui">移動/WASD｜低速Shift｜Z/Space｜X AUTO｜B ボム｜P ポーズ</div>
+<div class="ui">PC: WASD/矢印｜Shift低速｜Z射撃｜X AUTO｜Bボム｜Pポーズ<br>
+スマホ: ドラッグ移動｜2本指低速｜タップ射撃</div>
 </div>
+
+<div class="btn" id="bombBtn">BOMB</div>
+<div class="btn" id="pauseBtn">PAUSE</div>
 
 <div class="menu" id="menu">
 <div class="menuBox">
@@ -28,22 +78,58 @@ canvas{background:#070b1f;border-radius:12px}
 <div class="menuItem">Normal</div>
 <div class="menuItem">Hard</div>
 <div class="menuItem">Lunatic</div>
-<div style="opacity:.6;font-size:12px;margin-top:14px">↑↓ 選択 / Enter 決定</div>
+<div style="opacity:.6;font-size:12px;margin-top:14px">
+↑↓ 選択 / Enter 決定<br>スマホ: タップ
+</div>
 </div>
 </div>
 
 <script>
+/* === 基本 === */
 const c=document.getElementById("c"),ctx=c.getContext("2d");
-const W=c.width,H=c.height;
+const W=360,H=480;
 const keys={};
 addEventListener("keydown",e=>keys[e.key]=true);
 addEventListener("keyup",e=>keys[e.key]=false);
 
+/* === タッチ === */
+let touchX=W/2,touchY=H-80;
+let touching=false,slowTouch=false;
+
+c.addEventListener("touchstart",e=>{
+ touching=true;
+ slowTouch=e.touches.length>=2;
+ let r=c.getBoundingClientRect();
+ let t=e.touches[0];
+ touchX=(t.clientX-r.left)/r.width*W;
+ touchY=(t.clientY-r.top)/r.height*H;
+},{passive:false});
+
+c.addEventListener("touchmove",e=>{
+ e.preventDefault();
+ slowTouch=e.touches.length>=2;
+ let r=c.getBoundingClientRect();
+ let t=e.touches[0];
+ touchX=(t.clientX-r.left)/r.width*W;
+ touchY=(t.clientY-r.top)/r.height*H;
+},{passive:false});
+
+c.addEventListener("touchend",e=>{
+ touching=false;
+ slowTouch=false;
+},{passive:false});
+
+/* === ボタン === */
+bombBtn.onclick=()=>bombUse();
+pauseBtn.onclick=()=>paused=!paused;
+
+/* === 判定 === */
 const hit=(ax,ay,bx,by,r)=>{
  let dx=ax-bx,dy=ay-by;
  return dx*dx+dy*dy<r*r;
 };
 
+/* === 難易度 === */
 const DIFF={
  easy:{b:1,hp:1200},
  normal:{b:1.4,hp:2000},
@@ -59,20 +145,7 @@ let autoFire=true,score=0,hiScore=0,phase="mob";
 
 const player={x:W/2,y:H-60,r:3,s:3.2,slow:1.4};
 
-const ENEMY_TYPES=[
- {hp:6,speed:1.4,fire(e){
-  let a=Math.atan2(player.y-e.y,player.x-e.x);
-  bullets.push({x:e.x,y:e.y,vx:Math.cos(a)*2,vy:Math.sin(a)*2,r:4});
- }},
- {hp:8,speed:1,fire(e){
-  for(let i=0;i<6;i++){
-   let a=i/6*Math.PI*2;
-   bullets.push({x:e.x,y:e.y,vx:Math.cos(a)*1.6,vy:Math.sin(a)*1.6,r:3});
-  }
- }},
- {hp:4,speed:2.8,fire(e){}}
-];
-
+/* === メニュー === */
 const menu=document.getElementById("menu");
 const items=[...document.querySelectorAll(".menuItem")];
 let sel=0;
@@ -80,6 +153,7 @@ items.forEach((m,i)=>m.onclick=()=>{sel=i;start();});
 const updateMenu=()=>items.forEach((m,i)=>m.classList.toggle("sel",i===sel));
 updateMenu();
 
+/* === 開始 === */
 function start(){
  mode=items[sel].textContent.toLowerCase();
  menu.style.display="none";
@@ -91,19 +165,17 @@ function start(){
  boss=null;
 }
 
+/* === 自機 === */
 function shoot(){
  if(frame%5!==0)return;
  let y=player.y-8,x=player.x;
- if(keys.Shift){
-  [-6,-2,2,6].forEach(dx=>{
-   shots.push({x:x+dx,y,vx:0,vy:-6});
+ [-6,-2,2,6].forEach((dx,i)=>{
+  shots.push({
+   x:x+dx,y,
+   vx:slowTouch||keys.Shift?0:(dx*0.05),
+   vy:-6
   });
- }else{
-  shots.push({x:x-8,y,vx:-0.6,vy:-6});
-  shots.push({x:x-3,y,vx:-0.2,vy:-6});
-  shots.push({x:x+3,y,vx:0.2,vy:-6});
-  shots.push({x:x+8,y,vx:0.6,vy:-6});
- }
+ });
 }
 
 function bombUse(){
@@ -113,43 +185,42 @@ function bombUse(){
  inv=180;
 }
 
+/* === 敵 === */
 function spawnEnemy(){
- let t=ENEMY_TYPES[Math.random()*3|0];
  enemies.push({
   x:Math.random()*(W-40)+20,
-  y:-20,vx:(Math.random()<0.5?-1:1)*0.6,
-  hp:t.hp,speed:t.speed,fire:t.fire,t:0
+  y:-20,
+  vx:(Math.random()<.5?-1:1)*0.6,
+  hp:6,speed:1.6,t:0
  });
 }
 
+/* === 更新 === */
 function update(){
- if(!mode){
-  if(keys.ArrowUp){sel=(sel+3)%4;keys.ArrowUp=false;updateMenu();}
-  if(keys.ArrowDown){sel=(sel+1)%4;keys.ArrowDown=false;updateMenu();}
-  if(keys.Enter){start();keys.Enter=false;}
-  return;
- }
+ if(!mode)return;
 
- if((keys.x||keys.X)&&!keys._x)autoFire=!autoFire;
- keys._x=keys.x||keys.X;
- if((keys.p||keys.P)&&!keys._p)paused=!paused;
- keys._p=keys.p||keys.P;
  if(paused)return;
-
  frame++;score++;if(inv>0)inv--;
 
- let sp=keys.Shift?player.slow:player.s;
- if(keys.ArrowLeft||keys.a)player.x-=sp;
- if(keys.ArrowRight||keys.d)player.x+=sp;
- if(keys.ArrowUp||keys.w)player.y-=sp;
- if(keys.ArrowDown||keys.s)player.y+=sp;
+ let sp=(slowTouch||keys.Shift)?player.slow:player.s;
+
+ if(touching){
+  player.x+=(touchX-player.x)*0.2;
+  player.y+=(touchY-player.y)*0.2;
+ }else{
+  if(keys.ArrowLeft||keys.a)player.x-=sp;
+  if(keys.ArrowRight||keys.d)player.x+=sp;
+  if(keys.ArrowUp||keys.w)player.y-=sp;
+  if(keys.ArrowDown||keys.s)player.y+=sp;
+ }
+
  player.x=Math.max(10,Math.min(W-10,player.x));
  player.y=Math.max(10,Math.min(H-10,player.y));
 
- if(autoFire||keys.z||keys.Z||keys[" "])shoot();
- if(keys.b||keys.B){bombUse();keys.b=keys.B=false}
+ if(autoFire||touching||keys.z||keys[" "])shoot();
 
  shots.forEach(s=>{s.x+=s.vx;s.y+=s.vy;});
+ shots=shots.filter(s=>s.y>-20);
 
  if(phase==="mob"){
   if(frame%40===0)spawnEnemy();
@@ -158,22 +229,6 @@ function update(){
    boss={x:W/2,y:80,hp:DIFF[mode].hp,maxHp:DIFF[mode].hp,phase:0,form:1};
   }
  }
-
- enemies.forEach(e=>{
-  e.t++;e.x+=e.vx;e.y+=e.speed;
-  if(e.fire&&e.t%70===0)e.fire(e);
- });
-
- shots.forEach(s=>{
-  enemies.forEach(e=>{
-   if(hit(s.x,s.y,e.x,e.y,12)){
-    e.hp--;s.y=-999;
-    if(e.hp<=0){score+=200;e.y=999;}
-   }
-  });
- });
-
- enemies=enemies.filter(e=>e.y<H+40&&e.hp>0);
 
  if(boss){
   boss.phase++;
@@ -185,24 +240,14 @@ function update(){
    if(boss.hp<boss.maxHp*0.15)boss.form=4;
   }
 
-  if(frame%((boss.form>=3)?18:30)===0){
-   let n=boss.form>=3?32:24;
-   let sp=boss.form>=3?3:2.2;
-   for(let i=0;i<n;i++){
-    let a=i/n*Math.PI*2+boss.phase*0.05;
-    bullets.push({x:boss.x,y:boss.y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,r:4});
-   }
-  }
-
-  if(boss.form===4){
-   if(frame%40===0){
-    let a=Math.atan2(player.y-boss.y,player.x-boss.x);
-    [-0.15,0,0.15].forEach(d=>{
-     bullets.push({x:boss.x,y:boss.y,vx:Math.cos(a+d)*5,vy:Math.sin(a+d)*5,r:6});
+  if(frame%18===0){
+   for(let i=0;i<32;i++){
+    let a=i/32*Math.PI*2+boss.phase*0.1;
+    bullets.push({
+     x:boss.x,y:boss.y,
+     vx:Math.cos(a)*3,
+     vy:Math.sin(a)*3,r:4
     });
-   }
-   if(frame%6===0){
-    bullets.push({x:Math.random()*W,y:-10,vx:0,vy:4.2,r:3});
    }
   }
  }
@@ -211,63 +256,47 @@ function update(){
   b.x+=b.vx;b.y+=b.vy;
   if(inv<=0&&hit(b.x,b.y,player.x,player.y,b.r+player.r)){
    life--;inv=120;bullets=[];
-   if(life<=0)endGame();
   }
  });
 
  bullets=bullets.filter(b=>b.x>-30&&b.x<W+30&&b.y>-30&&b.y<H+30);
- if(bullets.length>1200)bullets.length=1200;
- shots=shots.filter(s=>s.y>-20);
 
- if(boss){
-  shots.forEach(s=>{
-   if(hit(s.x,s.y,boss.x,boss.y,18)){
-    boss.hp--;score+=10;s.y=-999;
-    if(boss.hp<=0){score+=5000;endGame();}
-   }
-  });
- }
+ shots.forEach(s=>{
+  if(boss&&hit(s.x,s.y,boss.x,boss.y,18)){
+   boss.hp--;s.y=-999;
+   if(boss.hp<=0)mode=null,menu.style.display="grid";
+  }
+ });
 }
 
-function endGame(){
- if(score>hiScore){
-  hiScore=score;
-  localStorage.setItem("hi_"+mode,hiScore);
- }
- mode=null;menu.style.display="grid";
-}
-
+/* === 描画 === */
 function draw(){
  ctx.clearRect(0,0,W,H);
- if(!mode)return;
 
  shots.forEach(s=>{
   ctx.fillStyle="#7df9ff";
   ctx.fillRect(s.x-2,s.y-8,4,8);
  });
- enemies.forEach(e=>{
-  ctx.fillStyle="#ffaa00";
-  ctx.beginPath();ctx.arc(e.x,e.y,10,0,Math.PI*2);ctx.fill();
- });
+
  bullets.forEach(b=>{
   ctx.fillStyle="#ff5cff";
   ctx.beginPath();ctx.arc(b.x,b.y,b.r,0,Math.PI*2);ctx.fill();
  });
+
  if(boss){
-  ctx.fillStyle=
-   boss.form===4?"#ffffff":
-   boss.form===3?"#ff00ff":
-   boss.form===2?"#ff5566":"#ff3355";
+  ctx.fillStyle=boss.form===4?"#fff":"#ff00ff";
   ctx.beginPath();ctx.arc(boss.x,boss.y,22,0,Math.PI*2);ctx.fill();
  }
+
  if(inv%10<5){
   ctx.fillStyle="#4cc9ff";
   ctx.beginPath();ctx.arc(player.x,player.y,6,0,Math.PI*2);ctx.fill();
   ctx.fillStyle="red";
   ctx.beginPath();ctx.arc(player.x,player.y,player.r,0,Math.PI*2);ctx.fill();
  }
+
  ctx.fillStyle="#fff";
- ctx.fillText(`SCORE:${score} HI:${hiScore} LIFE:${life} BOMB:${bomb}`,6,H-10);
+ ctx.fillText(`SCORE:${score} LIFE:${life} BOMB:${bomb}`,6,H-10);
 }
 
 (function loop(){update();draw();requestAnimationFrame(loop)})();
